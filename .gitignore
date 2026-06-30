@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+cache/*.jsonl
+cache/law_index/
+logs/*.jsonl
+logs/*.json
+outputs/*.json

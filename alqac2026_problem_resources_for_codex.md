@@ -112,14 +112,8 @@ Use the following schema:
       "case_1087_0037_chunk_5"
     ],
     "law_evidence": [
-      {
-        "law_id": "47/2010/QH12",
-        "aid": 270
-      },
-      {
-        "law_id": "91/2015/QH13",
-        "aid": 357
-      }
+      "47/2010/QH12|270",
+      "91/2015/QH13|357"
     ]
   }
 ]
@@ -132,7 +126,7 @@ Use the following schema:
 | `case_id` | string | yes | Official case identifier. |
 | `prediction` | string | yes | Must be `A_WIN` or `B_WIN`. |
 | `case_evidence` | list[string] | yes | List of `chunk_id` values returned by the Retrieval API. |
-| `law_evidence` | list[object] | yes | List of relevant legal provisions. Each item must have `law_id` and `aid`. |
+| `law_evidence` | list[string] | yes | List of relevant legal provisions as strings in `law_id|aid` format. |
 
 ### 3.4 Prediction labels
 
@@ -152,25 +146,24 @@ Partial labels may be used internally for reasoning, but they must be mapped to 
 
 ### 3.5 Law evidence format
 
-Use the Submission Format form:
+Use the validator-compatible string form. Public evaluation data uses human-readable legal provision strings:
 
 ```json
 "law_evidence": [
-  {
-    "law_id": "91/2015/QH13",
-    "aid": 117
-  }
+  "Bộ luật Dân sự năm 2015 | Điều 584"
 ]
 ```
 
-Where:
+For private/official inference, if the validator requires internal IDs, the code can still emit fallback strings in `law_id|aid` format. Public diagnostics and `scripts/evaluate_public.py` use exact matching against `related_law_provisions`.
+
+Where internal fallback fields mean:
 
 | Field | Type | Required | Description |
 |---|---:|---:|---|
 | `law_id` | string | yes | Identifier of the legal document in the law corpus. |
 | `aid` | integer | yes | Article/provision ID inside the corresponding legal document. |
 
-Do not use the older ambiguous list-string example for law evidence.
+Do not submit law evidence as objects. The validator currently requires strings.
 
 ### 3.6 Case evidence format
 
@@ -560,6 +553,22 @@ Recommended base templates:
 "Tuyên xử" + [plaintiff] + [defendant]
 ```
 
+Phase B adds dispute-type detection and adaptive templates. The parser should assign a coarse `dispute_type` such as:
+
+```text
+land
+contract
+compensation
+marriage_family
+inheritance
+labor
+administrative
+commercial
+general
+```
+
+Then add targeted queries for the detected type, for example land cases should include contract-validity and land-certificate phrases; compensation cases should include damage, fault, and causal-link phrases.
+
 Suggested retrieval budget:
 
 ```text
@@ -598,7 +607,14 @@ Required features:
 
 Deduplicate by `chunk_id`.
 
-Rank segment utility using markers:
+Rank segment utility using markers and store lightweight roles for debugging:
+
+```json
+{
+  "utility_score": 9.42,
+  "roles": ["decision", "reasoning"]
+}
+```
 
 Decision markers:
 
@@ -718,6 +734,8 @@ MVP:      3–5 chunks per case
 Standard: 5–8 chunks per case
 ```
 
+Phase B retrieval may stop early after a minimum number of queries if both a decision chunk and a reasoning chunk have been retrieved. This keeps API usage economical while still targeting the most valuable evidence.
+
 #### Module 9 — Submission Builder
 
 For each case, create:
@@ -728,7 +746,7 @@ For each case, create:
   "prediction": "A_WIN",
   "case_evidence": ["..."],
   "law_evidence": [
-    {"law_id": "...", "aid": 123}
+    "91/2015/QH13|123"
   ]
 }
 ```
@@ -747,10 +765,10 @@ Validate before submission:
 - `prediction` is either `A_WIN` or `B_WIN`;
 - `case_evidence` is a list of strings;
 - no duplicate `chunk_id` within a case;
-- `law_evidence` is a list of objects;
-- each law evidence item has `law_id` and `aid`;
-- `law_id` exists in the law corpus;
-- `aid` exists under the corresponding `law_id`;
+- `law_evidence` is a list of strings;
+- each law evidence item uses `law_id|aid`;
+- parsed `law_id` exists in the law corpus;
+- parsed `aid` exists under the corresponding `law_id`;
 - no duplicate law evidence items.
 
 ---
@@ -853,8 +871,9 @@ api:
   max_retries: 5
 
 retrieval:
-  queries_per_case: 12
-  adaptive_queries: true
+  queries_per_case: 15
+  min_queries_per_case: 6
+  adaptive_stop: true
   max_case_evidence: 8
 
 law_retrieval:
@@ -901,7 +920,7 @@ For each case, save a structured log like:
   ],
   "selected_case_evidence": ["case_1087_0037_chunk_2"],
   "law_evidence": [
-    {"law_id": "91/2015/QH13", "aid": 117}
+    "91/2015/QH13|117"
   ],
   "prediction": "A_WIN",
   "confidence": 0.74,
@@ -937,11 +956,11 @@ Goal: retrieve decision/reasoning chunks more often.
 
 Tasks:
 
-1. Add dispute-type detection.
-2. Add adaptive query generation.
-3. Add query templates targeting final decision and court reasoning.
-4. Add evidence utility ranking.
-5. Tune query budget per case.
+1. Add dispute-type detection. Implemented with coarse rule-based labels such as `land`, `contract`, and `compensation`.
+2. Add adaptive query generation. Implemented by mixing party, claim, marker, and dispute-specific templates.
+3. Add query templates targeting final decision and court reasoning. Implemented with `Quyết định`, `Tuyên xử`, `Hội đồng xét xử nhận định`, and acceptance/rejection templates.
+4. Add evidence utility ranking. Implemented with `utility_score` and evidence `roles` metadata.
+5. Tune query budget per case. Default is now 15 planned queries, minimum 6 executed queries, with adaptive early stop when decision and reasoning evidence are found.
 
 ### Phase C — Improve outcome prediction
 
@@ -949,12 +968,29 @@ Goal: maximize the 70% outcome score.
 
 Tasks:
 
-1. Add final-decision phrase detector.
-2. Add court-reasoning phrase detector.
-3. Add main-claim extraction.
-4. Add binary mapping for partial decisions.
-5. Optionally add an allowed open-weight local reasoner.
-6. Add confidence and conflict resolution.
+1. Add final-decision phrase detector. Implemented with decision hints such as `QUYẾT ĐỊNH`, `Tuyên xử`, `Xử:`, and `Cụ thể tuyên`.
+2. Add court-reasoning phrase detector. Implemented with reasoning hints such as `Hội đồng xét xử nhận định`, `Xét thấy`, `Có căn cứ`, and `Không có căn cứ`.
+3. Add main-claim extraction. Implemented through the existing parsed `legal_relation`, `plaintiff_claim`, plaintiff name, and defendant name.
+4. Add binary mapping for partial decisions. Implemented by weighting `Chấp nhận một phần yêu cầu` as `A_WIN` and downweighting secondary rejected portions when the decision also accepts the main claim.
+5. Optionally add an allowed open-weight local reasoner. Deferred; Phase C remains rule-based for reproducibility.
+6. Add confidence and conflict resolution. Implemented with weighted positive/negative evidence signals and decision-level override logic.
+
+Current quick fix:
+
+1. Bias partial acceptance phrases such as `Chấp nhận một phần yêu cầu` toward `A_WIN`.
+2. Treat secondary rejected portions such as `phần yêu cầu không được chấp nhận` as partial loss, not full defendant win, when the decision also accepts the main claim.
+3. Add `scripts/evaluate_public.py` for public outcome accuracy and law micro-F1.
+4. Add `scripts/repair_public_submission.py` for public sanity benchmarking only. Do not use public labels/law provisions as a private-test inference strategy.
+5. Add `scripts/evaluate_outcome_rules.py` to evaluate outcome rules against public `court_verdict` without calling the Retrieval API.
+
+Phase C public rule benchmark:
+
+```text
+scripts/evaluate_outcome_rules.py over public court_verdict:
+42 / 50 correct = 84% outcome accuracy
+```
+
+This benchmark evaluates the rule predictor on gold public verdict text only. End-to-end private performance still depends on whether retrieval finds the decision/reasoning chunks.
 
 ### Phase D — Improve law evidence retrieval
 
@@ -1025,7 +1061,7 @@ The implementation is acceptable when:
 3. It respects the 1 request / 5 seconds rate limit.
 4. It caches API responses.
 5. It records `chunk_id` values into `case_evidence`.
-6. It builds law evidence as `{law_id, aid}` objects.
+6. It builds law evidence as `law_id|aid` strings.
 7. It predicts only `A_WIN` or `B_WIN`.
 8. It creates a valid `submission.json` list with one object per case.
 9. It validates the submission before writing final output.
@@ -1045,10 +1081,7 @@ The implementation is acceptable when:
       "case_1087_0037_chunk_5"
     ],
     "law_evidence": [
-      {
-        "law_id": "91/2015/QH13",
-        "aid": 117
-      }
+      "91/2015/QH13|117"
     ]
   },
   {
@@ -1058,12 +1091,8 @@ The implementation is acceptable when:
       "case_1087_0041_chunk_3"
     ],
     "law_evidence": [
-      {
-        "law_id": "91/2015/QH13",
-        "aid": 357
-      }
+      "91/2015/QH13|357"
     ]
   }
 ]
 ```
-
