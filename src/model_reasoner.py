@@ -17,14 +17,14 @@ class LocalLLMReasoner:
         model_name: str,
         max_input_chars: int = 12000,
         max_new_tokens: int = 256,
-        load_in_4bit: bool = True,
+        load_in_4bit: bool = False,
     ) -> None:
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as exc:
             raise ModelReasonerUnavailable(
-                "Install transformers, accelerate, torch, and bitsandbytes to use LocalLLMReasoner."
+                "Install transformers, accelerate, torch, sentencepiece, and safetensors to use LocalLLMReasoner."
             ) from exc
 
         self.model_name = model_name
@@ -38,7 +38,7 @@ class LocalLLMReasoner:
         if load_in_4bit:
             kwargs["load_in_4bit"] = True
         else:
-            kwargs["torch_dtype"] = torch.float16
+            kwargs["torch_dtype"] = torch.bfloat16 if torch.cuda.is_available() else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
 
     def predict(

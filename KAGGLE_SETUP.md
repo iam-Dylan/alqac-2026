@@ -56,3 +56,7 @@ Qwen/Qwen2.5-3B-Instruct
 ```
 
 Both are intended to be loaded locally with `transformers`; do not use closed model APIs.
+
+## Dependency Note
+
+Kaggle images already include PyTorch/CUDA/RAPIDS packages. Do not upgrade CUDA, `numba`, `cudf`, `cuml`, or `dask-cuda` inside the notebook. The provided notebook installs only missing lightweight Hugging Face packages with `--no-deps` to avoid dependency resolver conflicts such as `cuda-core` or `numba-cuda` mismatches.

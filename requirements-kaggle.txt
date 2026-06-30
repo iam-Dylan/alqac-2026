@@ -1,5 +1,7 @@
-transformers>=4.45.0
-accelerate>=0.34.0
-bitsandbytes>=0.43.0
-sentencepiece>=0.2.0
-safetensors>=0.4.4
+# Keep this file intentionally small for Kaggle.
+# Do not install torch/cuda/numba/rapids here; Kaggle already provides them.
+# In the notebook, these packages are installed with --no-deps only if missing.
+transformers==4.45.2
+accelerate==0.34.2
+sentencepiece==0.2.0
+safetensors==0.4.5
