@@ -43,6 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "use_rule_override": True,
         "use_model_reasoner": False,
         "model_name": "Qwen/Qwen2.5-7B-Instruct",
+        "load_in_4bit": False,
         "adapter_path": None,
         "max_input_chars": 12000,
         "max_new_tokens": 256,

@@ -159,6 +159,7 @@ def run_pipeline(
                 model_name=str(prediction_cfg.get("model_name", "Qwen/Qwen2.5-7B-Instruct")),
                 max_input_chars=int(prediction_cfg.get("max_input_chars", 12000)),
                 max_new_tokens=int(prediction_cfg.get("max_new_tokens", 256)),
+                load_in_4bit=_as_bool(prediction_cfg.get("load_in_4bit"), default=False),
                 adapter_path=prediction_cfg.get("adapter_path"),
             )
         except ModelReasonerUnavailable:

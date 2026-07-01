@@ -29,6 +29,7 @@ prediction:
   use_rule_override: true
   use_model_reasoner: true
   model_name: "Qwen/Qwen2.5-7B-Instruct"
+  load_in_4bit: false
   adapter_path: null
   max_input_chars: 12000
   max_new_tokens: 256
