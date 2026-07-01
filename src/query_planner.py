@@ -6,14 +6,16 @@ from .utils import normalize_space
 
 
 DEFAULT_MARKER_QUERIES = [
-    "Hội đồng xét xử nhận định",
-    "Xét thấy",
     "Quyết định",
     "Tuyên xử",
+    "Vì các lẽ trên",
+    "Hội đồng xét xử nhận định",
+    "Xét thấy",
     "Chấp nhận yêu cầu khởi kiện",
     "Không chấp nhận yêu cầu khởi kiện",
     "Bác yêu cầu khởi kiện",
     "Căn cứ",
+    "Căn cứ vào các điều",
 ]
 
 DISPUTE_TYPE_QUERIES = {
@@ -83,6 +85,11 @@ def _party_queries(parsed: ParsedQuery) -> list[str]:
 def plan_queries(case: CaseInput, parsed: ParsedQuery, max_queries: int = 12) -> list[str]:
     candidates = [
         case.case_query,
+        "Quyết định",
+        "Tuyên xử",
+        "Vì các lẽ trên",
+        "Hội đồng xét xử nhận định",
+        "Xét thấy",
         f"{parsed.legal_relation} {parsed.plaintiff_claim}",
         f"{parsed.plaintiff} yêu cầu {parsed.plaintiff_claim}",
         f"{parsed.defendant} không đồng ý {parsed.legal_relation}",

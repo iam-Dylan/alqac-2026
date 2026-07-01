@@ -23,10 +23,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "ssl_verify": False,
     },
     "retrieval": {
-        "queries_per_case": 15,
-        "min_queries_per_case": 6,
-        "adaptive_stop": True,
-        "max_case_evidence": 8,
+        "queries_per_case": 20,
+        "min_queries_per_case": 12,
+        "adaptive_stop": False,
+        "max_case_evidence": 20,
     },
     "law_retrieval": {
         "method": "bm25",

@@ -871,10 +871,10 @@ api:
   max_retries: 5
 
 retrieval:
-  queries_per_case: 15
-  min_queries_per_case: 6
-  adaptive_stop: true
-  max_case_evidence: 8
+  queries_per_case: 20
+  min_queries_per_case: 12
+  adaptive_stop: false
+  max_case_evidence: 20
 
 law_retrieval:
   method: "bm25"

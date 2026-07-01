@@ -131,10 +131,12 @@ def retrieve_case_segments(
         results = response.get("results", [])
         if not results:
             continue
-        result = dict(results[0])
-        result["query"] = query
-        result["cached"] = bool(response.get("_cached", False))
-        segments.append(result)
+        for rank, raw_result in enumerate(results, start=1):
+            result = dict(raw_result)
+            result["query"] = query
+            result["result_rank"] = rank
+            result["cached"] = bool(response.get("_cached", False))
+            segments.append(result)
         deduped = deduplicate_segments(segments)
         if adaptive_stop and idx + 1 >= min_queries and has_enough_core_evidence(deduped):
             return deduped, client.api_call_count - before, executed
