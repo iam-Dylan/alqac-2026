@@ -52,6 +52,7 @@ def main() -> int:
     parser.add_argument("--save-steps", type=int, default=100)
     parser.add_argument("--limit-examples", type=int, default=None)
     parser.add_argument("--load-in-4bit", action="store_true")
+    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
@@ -79,12 +80,29 @@ def main() -> int:
 
     model_kwargs: dict[str, Any] = {"device_map": "auto", "trust_remote_code": True}
     if args.load_in_4bit:
-        model_kwargs["load_in_4bit"] = True
+        from transformers import BitsAndBytesConfig
+
+        compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_use_double_quant=True,
+        )
     else:
-        model_kwargs["torch_dtype"] = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        model_kwargs["torch_dtype"] = (
+            torch.bfloat16
+            if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+            else torch.float16
+            if torch.cuda.is_available()
+            else torch.float32
+        )
     model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
     if args.load_in_4bit:
         model = prepare_model_for_kbit_training(model)
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+    model.config.use_cache = False
 
     lora_config = LoraConfig(
         r=args.lora_r,
@@ -106,6 +124,22 @@ def main() -> int:
     if len(train_dataset) == 0:
         raise SystemExit(f"No training examples found in {args.train_file}")
 
+    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    fp16 = torch.cuda.is_available() and not bf16
+    print(
+        json.dumps(
+            {
+                "cuda_available": torch.cuda.is_available(),
+                "bf16_supported": bool(torch.cuda.is_available() and torch.cuda.is_bf16_supported()),
+                "bf16": bf16,
+                "fp16": fp16,
+                "load_in_4bit": args.load_in_4bit,
+                "gradient_checkpointing": args.gradient_checkpointing,
+            },
+            ensure_ascii=False,
+        )
+    )
+
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         max_steps=args.max_steps,
@@ -117,8 +151,8 @@ def main() -> int:
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
         save_total_limit=2,
-        bf16=torch.cuda.is_available(),
-        fp16=False,
+        bf16=bf16,
+        fp16=fp16,
         report_to=[],
         remove_unused_columns=False,
     )
