@@ -100,6 +100,12 @@ This optional path requires `FlagEmbedding` and the BGE-M3 model files to be ava
 The prepared fine-tune corpus is unlabeled legal text for domain-adaptive LoRA training, not supervised outcome labels:
 
 ```bash
+python scripts/audit_data_sources.py \
+  --law-corpus data/corpus_law_pub.json \
+  --external-registry data/external_sources.json \
+  --external-manifest data/external_raw/manifest.jsonl \
+  --finetune-file data/finetune/domain_adaptation.jsonl
+
 python scripts/build_finetune_corpus.py \
   --law-corpus data/corpus_law_pub.json \
   --external-manifest data/external_raw/manifest.jsonl \
@@ -114,11 +120,15 @@ python scripts/train_qwen_lora_domain.py \
 
 After training, set `prediction.adapter_path` to the adapter directory in the run config to load it during inference.
 
-The Kaggle notebook now loads the prepared fine-tune file from `data/finetune/domain_adaptation.jsonl`; it does not crawl external sources during the Kaggle run. When `TRAIN_QWEN_LORA = True` in the first settings cell, it runs this flow:
+The Kaggle notebook now loads the prepared fine-tune file from `data/finetune/domain_adaptation.jsonl`; it does not crawl external sources during the Kaggle run. If an attached Kaggle Dataset contains a newer `domain_adaptation.jsonl` or `manifest.jsonl`, the notebook copies that version over the small seed file in the repo before auditing/training. When `TRAIN_QWEN_LORA = True` in the first settings cell, it runs this flow:
 
-1. verify `data/finetune/domain_adaptation.jsonl` exists;
-2. train a Qwen LoRA adapter;
-3. write config with `adapter_path`;
-4. run the ALQAC pipeline and validate/evaluate.
+1. copy `domain_adaptation.jsonl` and `manifest.jsonl` from attached Kaggle datasets if present;
+2. audit law/external/fine-tune coverage with `scripts/audit_data_sources.py`;
+3. verify `data/finetune/domain_adaptation.jsonl` exists;
+4. train a Qwen LoRA adapter;
+5. write config with `adapter_path`;
+6. run the ALQAC pipeline and validate/evaluate.
+
+Current repository snapshot is still law-corpus dominated, but now includes an expanded seed external corpus. Run `scripts/audit_data_sources.py` to check the current external ratio before training. To increase external coverage further, run `scripts/crawl_external_legal_sources.py` locally or in a controlled environment, validate the registry, then rebuild `data/finetune/domain_adaptation.jsonl`.
 
 For a faster inference-only run, set `TRAIN_QWEN_LORA = False`.

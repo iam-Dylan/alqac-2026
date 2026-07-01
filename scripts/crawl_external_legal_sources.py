@@ -6,6 +6,7 @@ import hashlib
 import html
 import json
 import re
+import ssl
 import sys
 import time
 from collections import deque
@@ -121,9 +122,9 @@ def build_robot_parser(seed_url: str, user_agent: str) -> RobotFileParser | None
     return parser
 
 
-def fetch_html(url: str, user_agent: str, timeout: int) -> str:
+def fetch_html(url: str, user_agent: str, timeout: int, ssl_context: ssl.SSLContext | None = None) -> str:
     request = Request(url, headers={"User-Agent": user_agent})
-    with urlopen(request, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout, context=ssl_context) as response:
         content_type = response.headers.get("Content-Type", "")
         if "text/html" not in content_type and "application/xhtml" not in content_type:
             raise ValueError(f"Unsupported content type: {content_type}")
@@ -172,6 +173,7 @@ def crawl_source(
     timeout: int,
     user_agent: str,
     respect_robots: bool,
+    ssl_context: ssl.SSLContext | None,
 ) -> tuple[int, int]:
     seed_url = normalize_url(str(source["url_or_path"]))
     robot_parser = build_robot_parser(seed_url, user_agent) if respect_robots else None
@@ -190,7 +192,7 @@ def crawl_source(
             continue
         attempted += 1
         try:
-            html_text = fetch_html(url, user_agent, timeout)
+            html_text = fetch_html(url, user_agent, timeout, ssl_context)
             extractor = TextAndLinkExtractor(url)
             extractor.feed(html_text)
             text = extractor.text()
@@ -226,6 +228,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=20)
     parser.add_argument("--user-agent", default="alqac-2026-research-crawler/0.1")
     parser.add_argument("--ignore-robots", action="store_true")
+    parser.add_argument("--no-verify-ssl", action="store_true")
     args = parser.parse_args()
 
     validation = validate_registry(args.registry)
@@ -238,6 +241,7 @@ def main() -> int:
     manifest_path = Path(args.manifest)
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    ssl_context = ssl._create_unverified_context() if args.no_verify_ssl else None
 
     total_attempted = 0
     total_saved = 0
@@ -258,6 +262,7 @@ def main() -> int:
             timeout=args.timeout,
             user_agent=args.user_agent,
             respect_robots=not args.ignore_robots,
+            ssl_context=ssl_context,
         )
         total_attempted += attempted
         total_saved += saved

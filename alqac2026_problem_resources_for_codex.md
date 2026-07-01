@@ -1061,9 +1061,10 @@ Current implementation status:
 2. Phase D is implemented as a compliance scaffold with `data/external_sources.json`, `data/external_raw/`, and `scripts/validate_external_sources.py`. The registry now includes `vbpl.vn`, `congbao.chinhphu.vn`, and `phapdien.moj.gov.vn` as non-labeled legal sources. A small seed crawl has been run for accessible pages and stored under `data/external_raw/`; any larger crawl must still check terms, robots, and rate limits.
 3. Phase E is implemented as an optional BGE-M3 hybrid law retriever behind config (`law_retrieval.method: bm25_bge_m3`) with BM25 fallback when dense dependencies/model files are unavailable.
 4. A non-labeled domain-adaptation corpus is prepared at `data/finetune/domain_adaptation.jsonl`, built from the official law corpus plus compliant external raw legal text. This is suitable for domain-adaptive LoRA training, not supervised outcome-label training.
-5. `scripts/train_qwen_lora_domain.py` provides a Qwen2.5 LoRA domain-adaptation entrypoint. The inference pipeline supports `prediction.adapter_path` for loading the trained adapter.
-6. The current active phase is Phase E/F validation: compare BM25-only and optional BM25+BGE-M3 law retrieval, then run a Kaggle LoRA smoke test before deciding whether to use the adapter for private runs.
-7. Phase G should wait until Phase E/F results are logged.
+5. `scripts/audit_data_sources.py` audits official law, external manifest, and fine-tune coverage before training. The current snapshot is still dominated by the official law corpus, but includes an expanded seed external corpus: 42 external documents and 420 external fine-tune chunks, about 10% of `data/finetune/domain_adaptation.jsonl`.
+6. `scripts/train_qwen_lora_domain.py` provides a Qwen2.5 LoRA domain-adaptation entrypoint. The inference pipeline supports `prediction.adapter_path` for loading the trained adapter.
+7. The current active phase is Phase E/F validation: compare BM25-only and optional BM25+BGE-M3 law retrieval, then run a Kaggle LoRA smoke test before deciding whether to use the adapter for private runs.
+8. Phase G should wait until Phase E/F results are logged.
 
 ### Phase G — Final private run
 
