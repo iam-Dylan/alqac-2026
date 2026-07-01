@@ -71,7 +71,7 @@ def main() -> int:
     except ImportError as exc:
         raise SystemExit(
             "Missing training dependencies. Install transformers, torch, peft, accelerate, safetensors, "
-            "and bitsandbytes if using --load-in-4bit."
+            "and bitsandbytes>=0.46.1 if using --load-in-4bit."
         ) from exc
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
