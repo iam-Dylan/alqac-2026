@@ -93,21 +93,58 @@ def normalize_url(url: str) -> str:
     return clean.rstrip("/")
 
 
-def is_same_domain(seed: str, candidate: str) -> bool:
-    seed_host = urlparse(seed).netloc.lower()
+def is_same_domain(seed_urls: str | list[str], candidate: str) -> bool:
+    if isinstance(seed_urls, str):
+        seed_hosts = {urlparse(seed_urls).netloc.lower()}
+    else:
+        seed_hosts = {urlparse(seed).netloc.lower() for seed in seed_urls}
     candidate_host = urlparse(candidate).netloc.lower()
-    return bool(candidate_host) and candidate_host == seed_host
+    return bool(candidate_host) and candidate_host in seed_hosts
 
 
-def should_visit(seed: str, url: str) -> bool:
+def should_visit(seed_urls: str | list[str], url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return False
-    if not is_same_domain(seed, url):
+    if not is_same_domain(seed_urls, url):
         return False
     path = parsed.path.lower()
     blocked_ext = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar", ".jpg", ".jpeg", ".png")
     return not path.endswith(blocked_ext)
+
+
+def source_seed_urls(source: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for value in source.get("seed_urls", []):
+        if isinstance(value, str) and value.strip():
+            urls.append(normalize_url(value))
+    base = str(source["url_or_path"])
+    if base.startswith(("http://", "https://")):
+        urls.insert(0, normalize_url(base))
+    return list(dict.fromkeys(urls))
+
+
+def load_existing_manifest(path: str | Path) -> tuple[set[str], set[str]]:
+    manifest_path = Path(path)
+    urls: set[str] = set()
+    text_hashes: set[str] = set()
+    if not manifest_path.exists():
+        return urls, text_hashes
+    with manifest_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            url = item.get("url")
+            if isinstance(url, str):
+                urls.add(normalize_url(url))
+            text_sha256 = item.get("text_sha256")
+            if isinstance(text_sha256, str):
+                text_hashes.add(text_sha256)
+    return urls, text_hashes
 
 
 def build_robot_parser(seed_url: str, user_agent: str) -> RobotFileParser | None:
@@ -143,7 +180,8 @@ def save_document(
     url: str,
     text: str,
 ) -> dict[str, Any]:
-    digest = hashlib.sha256((url + "\n" + text).encode("utf-8")).hexdigest()
+    text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256((url + "\n" + text_sha256).encode("utf-8")).hexdigest()
     source_slug = slugify(str(source["url_or_path"]))
     target_dir = output_dir / source_slug
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +194,7 @@ def save_document(
         "url": url,
         "text_path": str(text_path),
         "sha256": digest,
+        "text_sha256": text_sha256,
         "chars": len(text),
         "contains_labels": bool(source.get("contains_labels", False)),
         "intended_use": source.get("intended_use", ""),
@@ -174,19 +213,31 @@ def crawl_source(
     user_agent: str,
     respect_robots: bool,
     ssl_context: ssl.SSLContext | None,
+    max_depth: int,
+    known_urls: set[str],
+    known_text_hashes: set[str],
 ) -> tuple[int, int]:
-    seed_url = normalize_url(str(source["url_or_path"]))
-    robot_parser = build_robot_parser(seed_url, user_agent) if respect_robots else None
-    queue: deque[str] = deque([seed_url])
+    seed_urls = source_seed_urls(source)
+    if not seed_urls:
+        return 0, 0
+    robot_parsers = {
+        urlparse(seed_url).netloc.lower(): build_robot_parser(seed_url, user_agent)
+        for seed_url in seed_urls
+        if respect_robots
+    }
+    queue: deque[tuple[str, int]] = deque((seed_url, 0) for seed_url in seed_urls)
     seen: set[str] = set()
     saved = 0
     attempted = 0
 
     while queue and saved < max_pages:
-        url = normalize_url(queue.popleft())
-        if url in seen or not should_visit(seed_url, url):
+        url, depth = queue.popleft()
+        url = normalize_url(url)
+        if url in seen or url in known_urls or not should_visit(seed_urls, url):
             continue
         seen.add(url)
+        host = urlparse(url).netloc.lower()
+        robot_parser = robot_parsers.get(host)
         if robot_parser is not None and not robot_parser.can_fetch(user_agent, url):
             print(f"robots.txt disallows: {url}", file=sys.stderr)
             continue
@@ -200,14 +251,22 @@ def crawl_source(
             print(f"Warning: failed to fetch {url}: {exc}", file=sys.stderr)
             continue
 
-        for link in extractor.links:
-            link = normalize_url(link)
-            if link not in seen and should_visit(seed_url, link):
-                queue.append(link)
+        if depth < max_depth:
+            for link in extractor.links:
+                link = normalize_url(link)
+                if link not in seen and link not in known_urls and should_visit(seed_urls, link):
+                    queue.append((link, depth + 1))
 
         if len(text) >= min_chars:
+            text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            if text_sha256 in known_text_hashes:
+                known_urls.add(url)
+                print(f"skipped duplicate text: {url}", file=sys.stderr)
+                continue
             item = save_document(output_dir, source, url, text)
             append_jsonl(manifest_path, item)
+            known_urls.add(url)
+            known_text_hashes.add(str(item["text_sha256"]))
             saved += 1
             print(f"saved {source['name']}: {url} -> {item['text_path']}")
         else:
@@ -223,6 +282,7 @@ def main() -> int:
     parser.add_argument("--output-dir", default="data/external_raw")
     parser.add_argument("--manifest", default="data/external_raw/manifest.jsonl")
     parser.add_argument("--max-pages-per-source", type=int, default=2)
+    parser.add_argument("--max-depth", type=int, default=3)
     parser.add_argument("--delay-seconds", type=float, default=1.0)
     parser.add_argument("--min-chars", type=int, default=300)
     parser.add_argument("--timeout", type=int, default=20)
@@ -242,6 +302,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     ssl_context = ssl._create_unverified_context() if args.no_verify_ssl else None
+    known_urls, known_text_hashes = load_existing_manifest(manifest_path)
 
     total_attempted = 0
     total_saved = 0
@@ -263,6 +324,9 @@ def main() -> int:
             user_agent=args.user_agent,
             respect_robots=not args.ignore_robots,
             ssl_context=ssl_context,
+            max_depth=max(0, args.max_depth),
+            known_urls=known_urls,
+            known_text_hashes=known_text_hashes,
         )
         total_attempted += attempted
         total_saved += saved
