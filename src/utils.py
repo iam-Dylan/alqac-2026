@@ -48,6 +48,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_new_tokens": 256,
         "model_override_min_confidence": 0.80,
         "rule_override_max_confidence": 0.55,
+        "model_min_confidence": 0.78,
+        "strong_rule_confidence": 0.68,
+        "weak_rule_confidence": 0.45,
     },
     "paths": {"cache_dir": "cache", "logs_dir": "logs"},
 }

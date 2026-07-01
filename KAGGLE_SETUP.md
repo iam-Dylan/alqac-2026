@@ -57,6 +57,27 @@ Qwen/Qwen2.5-3B-Instruct
 
 Both are intended to be loaded locally with `transformers`; do not use closed model APIs.
 
+## Outcome Guardrail
+
+The notebook can enable `USE_MODEL_REASONER=True`, but the model is not allowed to blindly override the rule predictor. The pipeline now uses a conservative arbiter:
+
+- if rule and model agree, keep that label;
+- if they conflict, keep the rule when rule confidence is strong;
+- allow model override only when the rule is weak and model confidence is high.
+
+Check `logs/prediction_logs.jsonl` after a run. The `prediction_source` field shows whether the final label came from `rule`, `rule_model_agree`, or `model_override_weak_rule`.
+
+For public debugging, run:
+
+```bash
+python3 scripts/diagnose_outcome.py \
+  --input data/ALQAC2026_public_test.json \
+  --submission outputs/public_submission.json \
+  --logs logs/prediction_logs.jsonl
+```
+
+This reports `model_only`, `rule_only`, and final submission accuracy when the updated logs contain `model_prediction`. It also flags wrong cases where retrieved snippets miss decision markers such as `Tuyên xử` or `Quyết định`.
+
 ## Dependency Note
 
 Kaggle images already include PyTorch/CUDA/RAPIDS packages. Do not upgrade CUDA, `numba`, `cudf`, `cuml`, or `dask-cuda` inside the notebook. The provided notebook installs only missing lightweight Hugging Face packages with `--no-deps` to avoid dependency resolver conflicts such as `cuda-core` or `numba-cuda` mismatches.

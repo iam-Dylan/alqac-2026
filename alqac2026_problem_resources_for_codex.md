@@ -973,7 +973,7 @@ Tasks:
 3. Add main-claim extraction. Implemented through the existing parsed `legal_relation`, `plaintiff_claim`, plaintiff name, and defendant name.
 4. Add binary mapping for partial decisions. Implemented by weighting `Chấp nhận một phần yêu cầu` as `A_WIN` and downweighting secondary rejected portions when the decision also accepts the main claim.
 5. Optionally add an allowed open-weight local reasoner. Implemented as a guarded helper, not as an unconditional replacement for rules.
-6. Add confidence and conflict resolution. Implemented with weighted positive/negative evidence signals, decision-level override logic, and model override thresholds.
+6. Add confidence and conflict resolution. Implemented with weighted positive/negative evidence signals, decision-level override logic, model override thresholds, and a conservative rule/model arbiter that logs `prediction_source`.
 
 Current quick fix:
 
@@ -1017,6 +1017,18 @@ Tasks:
 6. Add a reproducibility note to the technical report describing all external resources and why they are allowed.
 
 ### Phase E — Improve law evidence retrieval
+
+Kaggle model note:
+
+```yaml
+prediction:
+  use_model_reasoner: true
+  model_min_confidence: 0.78
+  strong_rule_confidence: 0.68
+  weak_rule_confidence: 0.45
+```
+
+The final logs include `rule_prediction`, `model_prediction`, and `prediction_source` so public/private degradation can be diagnosed without guessing.
 
 Goal: improve 10% law micro-F1.
 

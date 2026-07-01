@@ -35,35 +35,69 @@ def _as_bool(value: Any, default: bool = True) -> bool:
 def choose_prediction(
     rule_prediction: dict[str, Any],
     model_prediction: dict[str, Any],
-    model_override_min_confidence: float = DEFAULT_MODEL_OVERRIDE_MIN_CONFIDENCE,
-    rule_override_max_confidence: float = DEFAULT_RULE_OVERRIDE_MAX_CONFIDENCE,
-) -> dict[str, Any]:
-    rule_confidence = float(rule_prediction.get("confidence", 0.0))
-    model_confidence = float(model_prediction.get("confidence", 0.0))
-    if model_prediction["prediction"] == rule_prediction["prediction"]:
-        prediction = dict(rule_prediction)
-        prediction["confidence"] = max(rule_confidence, model_confidence)
-        prediction["rationale"] = (
-            "RULE_WITH_MODEL_AGREEMENT: "
-            + str(rule_prediction.get("rationale", ""))
-            + " MODEL: "
-            + str(model_prediction.get("rationale", ""))
-        )
-        return prediction
-    if rule_confidence <= rule_override_max_confidence and model_confidence >= model_override_min_confidence:
-        prediction = dict(model_prediction)
-        prediction["rationale"] = "MODEL_OVERRIDE_LOW_RULE_CONFIDENCE: " + str(prediction.get("rationale", ""))
-        return prediction
-    prediction = dict(rule_prediction)
-    prediction["rationale"] = (
-        "RULE_FALLBACK_MODEL_DISAGREEMENT: "
-        + str(rule_prediction.get("rationale", ""))
-        + " MODEL_WAS: "
-        + str(model_prediction.get("prediction"))
-        + f"({model_confidence:.2f}) "
-        + str(model_prediction.get("rationale", ""))
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    min_confidence = float(
+        config.get("model_min_confidence", config.get("model_override_min_confidence", DEFAULT_MODEL_OVERRIDE_MIN_CONFIDENCE))
     )
-    return prediction
+    strong_rule_confidence = float(config.get("strong_rule_confidence", 0.68))
+    weak_rule_confidence = float(
+        config.get("weak_rule_confidence", config.get("rule_override_max_confidence", DEFAULT_RULE_OVERRIDE_MAX_CONFIDENCE))
+    )
+
+    rule_label = rule_prediction["prediction"]
+    model_label = model_prediction["prediction"]
+    rule_confidence = float(rule_prediction.get("confidence", 0.5))
+    model_confidence = float(model_prediction.get("confidence", 0.5))
+
+    if model_label == rule_label:
+        chosen = dict(rule_prediction)
+        chosen["confidence"] = max(rule_confidence, min(model_confidence, 0.92))
+        chosen["rationale"] = (
+            "RULE_MODEL_AGREE: "
+            f"rule={rule_prediction.get('rationale', '')}; "
+            f"model={model_prediction.get('rationale', '')}"
+        )
+        return chosen, "rule_model_agree"
+
+    if model_confidence < min_confidence:
+        chosen = dict(rule_prediction)
+        chosen["rationale"] = (
+            "RULE_FALLBACK_MODEL_CONFLICT_LOW_CONFIDENCE: "
+            f"model={model_label}/{model_confidence:.2f}; "
+            f"rule={rule_label}/{rule_confidence:.2f}. "
+            f"{rule_prediction.get('rationale', '')}"
+        )
+        return chosen, "rule_conflict_model_low_confidence"
+
+    if rule_confidence >= strong_rule_confidence:
+        chosen = dict(rule_prediction)
+        chosen["rationale"] = (
+            "RULE_FALLBACK_STRONG_RULE_CONFLICT: "
+            f"model={model_label}/{model_confidence:.2f}; "
+            f"rule={rule_label}/{rule_confidence:.2f}. "
+            f"{rule_prediction.get('rationale', '')}"
+        )
+        return chosen, "rule_conflict_strong_rule"
+
+    if rule_confidence <= weak_rule_confidence and model_confidence >= min_confidence:
+        chosen = dict(model_prediction)
+        chosen["rationale"] = (
+            "MODEL_OVERRIDE_WEAK_RULE: "
+            f"model={model_label}/{model_confidence:.2f}; "
+            f"rule={rule_label}/{rule_confidence:.2f}. "
+            f"{model_prediction.get('rationale', '')}"
+        )
+        return chosen, "model_override_weak_rule"
+
+    chosen = dict(rule_prediction)
+    chosen["rationale"] = (
+        "RULE_FALLBACK_AMBIGUOUS_MODEL_CONFLICT: "
+        f"model={model_label}/{model_confidence:.2f}; "
+        f"rule={rule_label}/{rule_confidence:.2f}. "
+        f"{rule_prediction.get('rationale', '')}"
+    )
+    return chosen, "rule_conflict_ambiguous"
 
 
 def build_client(config: dict[str, Any]) -> CaseAPIClient:
@@ -155,6 +189,8 @@ def run_pipeline(
             public_law_evidence = split_public_law_provisions(str(case.raw.get("related_law_provisions", "")))
         rule_prediction = predict_outcome(case.case_query, segments, parsed)
         prediction = rule_prediction
+        prediction_source = "rule"
+        model_prediction = None
         if model_reasoner is not None:
             try:
                 model_prediction = model_reasoner.predict(
@@ -163,18 +199,10 @@ def run_pipeline(
                     segments,
                     public_law_evidence or law_hits_to_internal_strings(law_hits),
                 )
-                prediction = choose_prediction(
-                    rule_prediction,
-                    model_prediction,
-                    model_override_min_confidence=float(
-                        prediction_cfg.get("model_override_min_confidence", DEFAULT_MODEL_OVERRIDE_MIN_CONFIDENCE)
-                    ),
-                    rule_override_max_confidence=float(
-                        prediction_cfg.get("rule_override_max_confidence", DEFAULT_RULE_OVERRIDE_MAX_CONFIDENCE)
-                    ),
-                )
+                prediction, prediction_source = choose_prediction(rule_prediction, model_prediction, prediction_cfg)
             except Exception as exc:
                 prediction = rule_prediction
+                prediction_source = "rule_model_error"
                 prediction["rationale"] = f"RULE_FALLBACK_MODEL_ERROR({type(exc).__name__}): {prediction['rationale']}"
         item = build_submission_item(
             case_id=case.case_id,
@@ -193,6 +221,9 @@ def run_pipeline(
             "retrieved_segments": segments,
             "selected_case_evidence": selected_case_evidence,
             "law_evidence": item["law_evidence"],
+            "rule_prediction": rule_prediction,
+            "model_prediction": model_prediction,
+            "prediction_source": prediction_source,
             "prediction": prediction["prediction"],
             "confidence": prediction["confidence"],
             "reasoning_summary": prediction["rationale"],
