@@ -93,12 +93,11 @@ python scripts/train_qwen_lora_domain.py \
 
 After training, set `prediction.adapter_path` to the adapter directory in the run config to load it during inference.
 
-The Kaggle notebook now runs this flow from top to bottom when `TRAIN_QWEN_LORA = True` in the first settings cell:
+The Kaggle notebook now loads the prepared fine-tune file from `data/finetune/domain_adaptation.jsonl`; it does not crawl external sources during the Kaggle run. When `TRAIN_QWEN_LORA = True` in the first settings cell, it runs this flow:
 
-1. optionally crawl a small approved external-source seed;
-2. build `data/finetune/domain_adaptation.jsonl`;
-3. train a Qwen LoRA adapter;
-4. write config with `adapter_path`;
-5. run the ALQAC pipeline and validate/evaluate.
+1. verify `data/finetune/domain_adaptation.jsonl` exists;
+2. train a Qwen LoRA adapter;
+3. write config with `adapter_path`;
+4. run the ALQAC pipeline and validate/evaluate.
 
-For a faster inference-only run, set `TRAIN_QWEN_LORA = False` and optionally `CRAWL_EXTERNAL_LEGAL_SOURCES = False`.
+For a faster inference-only run, set `TRAIN_QWEN_LORA = False`.
