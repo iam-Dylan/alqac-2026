@@ -233,7 +233,7 @@ def crawl_source(
     while queue and saved < max_pages:
         url, depth = queue.popleft()
         url = normalize_url(url)
-        if url in seen or url in known_urls or not should_visit(seed_urls, url):
+        if url in seen or not should_visit(seed_urls, url):
             continue
         seen.add(url)
         host = urlparse(url).netloc.lower()
@@ -254,14 +254,22 @@ def crawl_source(
         if depth < max_depth:
             for link in extractor.links:
                 link = normalize_url(link)
-                if link not in seen and link not in known_urls and should_visit(seed_urls, link):
+                if link not in seen and should_visit(seed_urls, link):
                     queue.append((link, depth + 1))
+
+        if url in known_urls:
+            print(f"expanded already-crawled page: {url}", file=sys.stderr)
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+            continue
 
         if len(text) >= min_chars:
             text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
             if text_sha256 in known_text_hashes:
                 known_urls.add(url)
                 print(f"skipped duplicate text: {url}", file=sys.stderr)
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
                 continue
             item = save_document(output_dir, source, url, text)
             append_jsonl(manifest_path, item)
