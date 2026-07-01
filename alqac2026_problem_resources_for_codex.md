@@ -972,8 +972,8 @@ Tasks:
 2. Add court-reasoning phrase detector. Implemented with reasoning hints such as `Hội đồng xét xử nhận định`, `Xét thấy`, `Có căn cứ`, and `Không có căn cứ`.
 3. Add main-claim extraction. Implemented through the existing parsed `legal_relation`, `plaintiff_claim`, plaintiff name, and defendant name.
 4. Add binary mapping for partial decisions. Implemented by weighting `Chấp nhận một phần yêu cầu` as `A_WIN` and downweighting secondary rejected portions when the decision also accepts the main claim.
-5. Optionally add an allowed open-weight local reasoner. Deferred; Phase C remains rule-based for reproducibility.
-6. Add confidence and conflict resolution. Implemented with weighted positive/negative evidence signals and decision-level override logic.
+5. Optionally add an allowed open-weight local reasoner. Implemented as a guarded helper, not as an unconditional replacement for rules.
+6. Add confidence and conflict resolution. Implemented with weighted positive/negative evidence signals, decision-level override logic, and model override thresholds.
 
 Current quick fix:
 
@@ -982,29 +982,78 @@ Current quick fix:
 3. Add `scripts/evaluate_public.py` for public outcome accuracy and law micro-F1.
 4. Add `scripts/repair_public_submission.py` for public sanity benchmarking only. Do not use public labels/law provisions as a private-test inference strategy.
 5. Add `scripts/evaluate_outcome_rules.py` to evaluate outcome rules against public `court_verdict` without calling the Retrieval API.
+6. Normalize verdict text before phrase matching to handle repeated whitespace and composed Vietnamese accents.
+7. Add primary rejection patterns such as `không chấp nhận yêu cầu`, `bác yêu cầu của`, and `không chấp nhận toàn bộ yêu cầu`.
+8. Treat accepted counterclaims or independent claims as defendant-favorable unless the main plaintiff claim is separately accepted.
+9. Use the local model reasoner only when it agrees with the rule prediction, or when rule confidence is low and model confidence is high.
 
 Phase C public rule benchmark:
 
 ```text
 scripts/evaluate_outcome_rules.py over public court_verdict:
-42 / 50 correct = 84% outcome accuracy
+46 / 50 correct = 92% outcome accuracy
 ```
 
 This benchmark evaluates the rule predictor on gold public verdict text only. End-to-end private performance still depends on whether retrieval finds the decision/reasoning chunks.
 
-### Phase D — Improve law evidence retrieval
+Model decision:
+
+1. Keep `Qwen/Qwen2.5-7B-Instruct` as the default optional local generative reasoner. It is not the primary classifier; it is a guarded helper behind rule confidence and model confidence thresholds.
+2. Do not switch the default reasoner to a Vietnamese generative model yet. Vietnamese-native generative models such as VinaLLaMA should be treated as ablation candidates until they beat Qwen2.5 on the same retrieved evidence, JSON-validity checks, runtime constraints, and public diagnostics.
+3. Do not use PhoBERT as a drop-in replacement for the generative reasoner. PhoBERT is better suited as a future supervised classifier or reranker if a compliant labeled training set is available.
+4. Prioritize `BAAI/bge-m3` as the first dense retrieval/reranking candidate for law evidence retrieval because it supports multilingual retrieval, dense/sparse/multi-vector modes, and longer retrieval inputs than Vietnamese encoder classifiers.
+
+### Phase D — Add compliant external legal resources
+
+Goal: improve legal grounding without violating external dataset restrictions.
+
+Tasks:
+
+1. Create an allowlist for external resources: raw legal texts, official legal documents, public online legal databases, and non-annotated legal reference text.
+2. Create a blocklist for prohibited resources: labeled legal QA datasets, labeled legal entailment datasets, and external outcome-labeled case datasets.
+3. Add metadata for every external source used: source name, URL or dataset path, access date, license/terms note if available, and whether it contains labels.
+4. Store external resources separately from official competition inputs, for example under `data/external_raw/`, and never mix them with private-test inputs.
+5. Use external raw legal text only for law retrieval, query expansion, dispute taxonomy, or prompt context. Do not train or tune on prohibited labels.
+6. Add a reproducibility note to the technical report describing all external resources and why they are allowed.
+
+### Phase E — Improve law evidence retrieval
 
 Goal: improve 10% law micro-F1.
 
 Tasks:
 
 1. Improve law corpus preprocessing.
-2. Add dense retrieval if feasible.
-3. Add reranking.
-4. Remove generic/irrelevant law provisions.
-5. Tune `top_k` for law evidence.
+2. Add external raw legal text as auxiliary retrieval context if it passes the Phase D compliance checklist.
+3. Add `BAAI/bge-m3` as an optional dense/hybrid law retriever behind config, while preserving BM25 as the fallback/default-safe path.
+4. Add reranking for the top BM25/BGE candidates if runtime allows.
+5. Compare BM25-only vs BM25+BGE-M3 on public law micro-F1 using the same submission format.
+6. Remove generic/irrelevant law provisions.
+7. Tune `top_k` for law evidence.
 
-### Phase E — Final private run
+### Phase F — Calibration and ablation
+
+Goal: verify that each improvement helps before the final private run.
+
+Tasks:
+
+1. Compare rule-only, model-only, and guarded hybrid prediction on public diagnostics.
+2. Compare Qwen2.5 guarded reasoning against any Vietnamese generative candidate only as an ablation, not as a default switch.
+3. Measure retrieval hit quality separately from outcome prediction, because a strong predictor can still fail if decision chunks are not retrieved.
+4. Keep model override conservative: prefer rules when the rule confidence is high or when the model disagrees without direct decision evidence.
+5. Run a small query-budget ablation, for example 8, 12, and 15 planned queries per case, and choose the best tradeoff between recall and API penalty.
+6. Record all public-test benchmark results in logs or the technical report; do not hard-code public labels or public gold law provisions into private inference.
+
+Current implementation status:
+
+1. Phase A, Phase B, and Phase C are implemented in the current codebase.
+2. Phase D is implemented as a compliance scaffold with `data/external_sources.json`, `data/external_raw/`, and `scripts/validate_external_sources.py`. The registry now includes `vbpl.vn`, `congbao.chinhphu.vn`, and `phapdien.moj.gov.vn` as non-labeled legal sources. A small seed crawl has been run for accessible pages and stored under `data/external_raw/`; any larger crawl must still check terms, robots, and rate limits.
+3. Phase E is implemented as an optional BGE-M3 hybrid law retriever behind config (`law_retrieval.method: bm25_bge_m3`) with BM25 fallback when dense dependencies/model files are unavailable.
+4. A non-labeled domain-adaptation corpus is prepared at `data/finetune/domain_adaptation.jsonl`, built from the official law corpus plus compliant external raw legal text. This is suitable for domain-adaptive LoRA training, not supervised outcome-label training.
+5. `scripts/train_qwen_lora_domain.py` provides a Qwen2.5 LoRA domain-adaptation entrypoint. The inference pipeline supports `prediction.adapter_path` for loading the trained adapter.
+6. The current active phase is Phase E/F validation: compare BM25-only and optional BM25+BGE-M3 law retrieval, then run a Kaggle LoRA smoke test before deciding whether to use the adapter for private runs.
+7. Phase G should wait until Phase E/F results are logged.
+
+### Phase G — Final private run
 
 Goal: stable private-test submission.
 

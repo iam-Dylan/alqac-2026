@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,14 +31,17 @@ POSITIVE_PATTERNS = [
     "chấp nhận yêu cầu",
     "chấp nhận một phần yêu cầu khởi kiện",
     "chấp nhận một phần yêu cầu",
+    "chấp nhận một phần khởi kiện",
     "có căn cứ chấp nhận",
     "buộc bị đơn",
 ]
 
 NEGATIVE_PATTERNS = [
     "không chấp nhận yêu cầu khởi kiện",
+    "không chấp nhận yêu cầu",
     "không chấp nhận toàn bộ yêu cầu",
     "bác yêu cầu khởi kiện",
+    "bác yêu cầu của",
     "bác toàn bộ yêu cầu",
     "không có căn cứ chấp nhận",
 ]
@@ -56,6 +60,11 @@ DEFENSE_REJECTION_HINTS = [
     "bác yêu cầu độc lập",
 ]
 
+OPPOSING_CLAIM_ACCEPTANCE_HINTS = [
+    "chấp nhận yêu cầu phản tố",
+    "chấp nhận yêu cầu độc lập",
+]
+
 
 @dataclass(frozen=True)
 class EvidenceSignal:
@@ -70,8 +79,13 @@ def _contains_any(text: str, patterns: list[str]) -> bool:
     return any(pattern in text for pattern in patterns)
 
 
+def _normalize_for_match(text: str) -> str:
+    text = unicodedata.normalize("NFC", text or "").lower()
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _text_type(text: str) -> str:
-    lowered = text.lower()
+    lowered = _normalize_for_match(text)
     if _contains_any(lowered, FINAL_DECISION_HINTS):
         return "decision"
     if _contains_any(lowered, REASONING_HINTS):
@@ -125,12 +139,17 @@ def _is_negated_match(text: str, start: int) -> bool:
     return bool(re.search(r"(không|chưa|bác)\s+$", prefix))
 
 
+def _is_opposing_claim_context(text: str, start: int) -> bool:
+    suffix = text[start:start + 56]
+    return "phản tố" in suffix or "yêu cầu độc lập" in suffix
+
+
 def _iter_unnegated_patterns(text: str, patterns: list[str]) -> list[str]:
     matched: list[str] = []
     for pattern in patterns:
         start = text.find(pattern)
         while start != -1:
-            if not _is_negated_match(text, start):
+            if not _is_negated_match(text, start) and not _is_opposing_claim_context(text, start):
                 matched.append(pattern)
                 break
             start = text.find(pattern, start + 1)
@@ -162,7 +181,7 @@ def _collect_signals(case_query: str, segments: list[dict[str, Any]], parsed: Pa
     signals: list[EvidenceSignal] = []
     for segment in segments:
         text = str(segment.get("text", ""))
-        lowered = text.lower()
+        lowered = _normalize_for_match(text)
         text_type = _text_type(lowered)
         base = _base_weight(text_type) * _claim_overlap_weight(lowered, parsed)
         chunk_id = str(segment.get("chunk_id", ""))
@@ -171,6 +190,9 @@ def _collect_signals(case_query: str, segments: list[dict[str, Any]], parsed: Pa
         for pattern in DEFENSE_REJECTION_HINTS:
             if pattern in lowered:
                 signals.append(EvidenceSignal("positive", base * 1.4, pattern, chunk_id, text_type))
+        for pattern in OPPOSING_CLAIM_ACCEPTANCE_HINTS:
+            if pattern in lowered:
+                signals.append(EvidenceSignal("negative", base * 1.35, pattern, chunk_id, text_type))
         for pattern in _iter_unnegated_patterns(lowered, POSITIVE_PATTERNS):
             weight = base * _party_weight(lowered, parsed, "positive")
             if "một phần" in pattern:
@@ -181,8 +203,18 @@ def _collect_signals(case_query: str, segments: list[dict[str, Any]], parsed: Pa
         for pattern in NEGATIVE_PATTERNS:
             if pattern in lowered:
                 weight = base * _party_weight(lowered, parsed, "negative")
-                if secondary_rejection and any(sig.polarity == "positive" and sig.chunk_id == chunk_id for sig in signals):
+                primary_rejection = pattern in {
+                    "không chấp nhận yêu cầu khởi kiện",
+                    "không chấp nhận toàn bộ yêu cầu",
+                    "bác yêu cầu khởi kiện",
+                    "bác toàn bộ yêu cầu",
+                }
+                if secondary_rejection and not primary_rejection and any(
+                    sig.polarity == "positive" and sig.chunk_id == chunk_id for sig in signals
+                ):
                     weight *= 0.35
+                if "toàn bộ" in pattern:
+                    weight *= 1.45
                 signals.append(EvidenceSignal("negative", weight, pattern, chunk_id, text_type))
     return signals
 
@@ -206,7 +238,17 @@ def predict_outcome(
 
     has_decision_positive = any(signal.polarity == "positive" and signal.text_type == "decision" for signal in signals)
     has_decision_negative = any(signal.polarity == "negative" and signal.text_type == "decision" for signal in signals)
+    has_full_decision_rejection = any(
+        signal.polarity == "negative" and signal.text_type == "decision" and "toàn bộ" in signal.pattern
+        for signal in signals
+    )
 
+    if has_full_decision_rejection:
+        return {
+            "prediction": "B_WIN",
+            "confidence": 0.88,
+            "rationale": f"Decision-level full rejection of main claim detected. Signals: {_summarize(signals)}",
+        }
     if has_decision_positive and positive >= negative * 0.85:
         confidence = 0.86 if positive > negative else 0.68
         return {

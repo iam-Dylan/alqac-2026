@@ -60,3 +60,45 @@ Both are intended to be loaded locally with `transformers`; do not use closed mo
 ## Dependency Note
 
 Kaggle images already include PyTorch/CUDA/RAPIDS packages. Do not upgrade CUDA, `numba`, `cudf`, `cuml`, or `dask-cuda` inside the notebook. The provided notebook installs only missing lightweight Hugging Face packages with `--no-deps` to avoid dependency resolver conflicts such as `cuda-core` or `numba-cuda` mismatches.
+
+## Optional BGE-M3 Law Retrieval
+
+The default law retriever remains BM25. To test BGE-M3 hybrid retrieval, set:
+
+```yaml
+law_retrieval:
+  method: "bm25_bge_m3"
+  embedding_model_name: "BAAI/bge-m3"
+  dense_fallback_to_bm25: true
+```
+
+This optional path requires `FlagEmbedding` and the BGE-M3 model files to be available in the Kaggle environment. If they are unavailable and `dense_fallback_to_bm25` is true, the pipeline falls back to BM25.
+
+## Optional Qwen LoRA Domain Adaptation
+
+The prepared fine-tune corpus is unlabeled legal text for domain-adaptive LoRA training, not supervised outcome labels:
+
+```bash
+python scripts/build_finetune_corpus.py \
+  --law-corpus data/corpus_law_pub.json \
+  --external-manifest data/external_raw/manifest.jsonl \
+  --output data/finetune/domain_adaptation.jsonl
+
+python scripts/train_qwen_lora_domain.py \
+  --train-file data/finetune/domain_adaptation.jsonl \
+  --output-dir outputs/adapters/qwen2_5_legal_dapt_lora \
+  --load-in-4bit \
+  --max-steps 200
+```
+
+After training, set `prediction.adapter_path` to the adapter directory in the run config to load it during inference.
+
+The Kaggle notebook now runs this flow from top to bottom when `TRAIN_QWEN_LORA = True` in the first settings cell:
+
+1. optionally crawl a small approved external-source seed;
+2. build `data/finetune/domain_adaptation.jsonl`;
+3. train a Qwen LoRA adapter;
+4. write config with `adapter_path`;
+5. run the ALQAC pipeline and validate/evaluate.
+
+For a faster inference-only run, set `TRAIN_QWEN_LORA = False` and optionally `CRAWL_EXTERNAL_LEGAL_SOURCES = False`.

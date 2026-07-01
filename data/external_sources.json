@@ -1,0 +1,49 @@
+{
+  "policy": {
+    "allowed_categories": [
+      "raw_legal_text",
+      "official_legal_document",
+      "public_legal_database",
+      "non_annotated_reference"
+    ],
+    "prohibited_categories": [
+      "labeled_legal_qa",
+      "labeled_legal_entailment",
+      "outcome_labeled_case_dataset"
+    ],
+    "notes": [
+      "External sources may be used for law retrieval, query expansion, dispute taxonomy, or prompt context.",
+      "Do not train or tune on external labeled legal QA, legal entailment, or outcome-labeled case datasets.",
+      "Keep external resources separate from official public/private competition inputs."
+    ]
+  },
+  "sources": [
+    {
+      "name": "Cơ sở dữ liệu Quốc gia về Văn bản quy phạm pháp luật",
+      "category": "public_legal_database",
+      "url_or_path": "https://vbpl.vn/",
+      "access_date": "2026-07-01",
+      "license_or_terms_note": "Official public legal document portal. Check site terms before bulk crawling; use only raw legal text/metadata, not labels.",
+      "contains_labels": false,
+      "intended_use": "law retrieval corpus enrichment, law title mapping, query expansion, and legal-domain terminology normalization"
+    },
+    {
+      "name": "Công báo điện tử Nước CHXHCN Việt Nam",
+      "category": "official_legal_document",
+      "url_or_path": "https://congbao.chinhphu.vn/",
+      "access_date": "2026-07-01",
+      "license_or_terms_note": "Official gazette portal. Check site terms before bulk crawling; use only official raw legal documents and metadata.",
+      "contains_labels": false,
+      "intended_use": "raw official legal text, document metadata, and updated legal provision context for retrieval"
+    },
+    {
+      "name": "Cổng thông tin điện tử pháp điển",
+      "category": "non_annotated_reference",
+      "url_or_path": "https://phapdien.moj.gov.vn/",
+      "access_date": "2026-07-01",
+      "license_or_terms_note": "Official legal codification/reference portal. Check site terms before bulk crawling; use only non-annotated reference text.",
+      "contains_labels": false,
+      "intended_use": "dispute taxonomy, legal topic grouping, query expansion, and prompt context for legal-domain terminology"
+    }
+  ]
+}

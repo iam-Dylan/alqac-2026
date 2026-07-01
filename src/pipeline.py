@@ -7,7 +7,7 @@ from .case_api_client import CaseAPIClient
 from .evidence_selector import select_case_evidence
 from .evidence_store import deduplicate_segments, has_enough_core_evidence
 from .input_loader import CaseInput, load_cases
-from .law_retriever import BM25LawRetriever, load_law_keys
+from .law_retriever import build_law_retriever, load_law_keys
 from .law_evidence import law_hits_to_internal_strings, split_public_law_provisions
 from .model_reasoner import LocalLLMReasoner, ModelReasonerUnavailable
 from .outcome_predictor import predict_outcome
@@ -18,6 +18,10 @@ from .utils import append_jsonl, get_api_key, load_config, write_json
 from .validator import validate_submission_data
 
 
+DEFAULT_MODEL_OVERRIDE_MIN_CONFIDENCE = 0.80
+DEFAULT_RULE_OVERRIDE_MAX_CONFIDENCE = 0.55
+
+
 def _as_bool(value: Any, default: bool = True) -> bool:
     if isinstance(value, bool):
         return value
@@ -26,6 +30,40 @@ def _as_bool(value: Any, default: bool = True) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
     return bool(value)
+
+
+def choose_prediction(
+    rule_prediction: dict[str, Any],
+    model_prediction: dict[str, Any],
+    model_override_min_confidence: float = DEFAULT_MODEL_OVERRIDE_MIN_CONFIDENCE,
+    rule_override_max_confidence: float = DEFAULT_RULE_OVERRIDE_MAX_CONFIDENCE,
+) -> dict[str, Any]:
+    rule_confidence = float(rule_prediction.get("confidence", 0.0))
+    model_confidence = float(model_prediction.get("confidence", 0.0))
+    if model_prediction["prediction"] == rule_prediction["prediction"]:
+        prediction = dict(rule_prediction)
+        prediction["confidence"] = max(rule_confidence, model_confidence)
+        prediction["rationale"] = (
+            "RULE_WITH_MODEL_AGREEMENT: "
+            + str(rule_prediction.get("rationale", ""))
+            + " MODEL: "
+            + str(model_prediction.get("rationale", ""))
+        )
+        return prediction
+    if rule_confidence <= rule_override_max_confidence and model_confidence >= model_override_min_confidence:
+        prediction = dict(model_prediction)
+        prediction["rationale"] = "MODEL_OVERRIDE_LOW_RULE_CONFIDENCE: " + str(prediction.get("rationale", ""))
+        return prediction
+    prediction = dict(rule_prediction)
+    prediction["rationale"] = (
+        "RULE_FALLBACK_MODEL_DISAGREEMENT: "
+        + str(rule_prediction.get("rationale", ""))
+        + " MODEL_WAS: "
+        + str(model_prediction.get("prediction"))
+        + f"({model_confidence:.2f}) "
+        + str(model_prediction.get("rationale", ""))
+    )
+    return prediction
 
 
 def build_client(config: dict[str, Any]) -> CaseAPIClient:
@@ -78,7 +116,7 @@ def run_pipeline(
     config = load_config(config_path)
     cases = load_cases(input_path)
     client = build_client(config)
-    law_retriever = BM25LawRetriever.from_law_corpus(law_corpus_path)
+    law_retriever = build_law_retriever(config, law_corpus_path)
     prediction_cfg = config.get("prediction", {})
     model_reasoner = None
     if _as_bool(prediction_cfg.get("use_model_reasoner"), default=False):
@@ -87,6 +125,7 @@ def run_pipeline(
                 model_name=str(prediction_cfg.get("model_name", "Qwen/Qwen2.5-7B-Instruct")),
                 max_input_chars=int(prediction_cfg.get("max_input_chars", 12000)),
                 max_new_tokens=int(prediction_cfg.get("max_new_tokens", 256)),
+                adapter_path=prediction_cfg.get("adapter_path"),
             )
         except ModelReasonerUnavailable:
             raise
@@ -124,12 +163,16 @@ def run_pipeline(
                     segments,
                     public_law_evidence or law_hits_to_internal_strings(law_hits),
                 )
-                if model_prediction["confidence"] >= 0.55:
-                    prediction = model_prediction
-                    prediction["rationale"] = "MODEL: " + prediction["rationale"]
-                else:
-                    prediction = rule_prediction
-                    prediction["rationale"] = "RULE_FALLBACK_LOW_MODEL_CONFIDENCE: " + prediction["rationale"]
+                prediction = choose_prediction(
+                    rule_prediction,
+                    model_prediction,
+                    model_override_min_confidence=float(
+                        prediction_cfg.get("model_override_min_confidence", DEFAULT_MODEL_OVERRIDE_MIN_CONFIDENCE)
+                    ),
+                    rule_override_max_confidence=float(
+                        prediction_cfg.get("rule_override_max_confidence", DEFAULT_RULE_OVERRIDE_MAX_CONFIDENCE)
+                    ),
+                )
             except Exception as exc:
                 prediction = rule_prediction
                 prediction["rationale"] = f"RULE_FALLBACK_MODEL_ERROR({type(exc).__name__}): {prediction['rationale']}"

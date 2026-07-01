@@ -18,6 +18,7 @@ class LocalLLMReasoner:
         max_input_chars: int = 12000,
         max_new_tokens: int = 256,
         load_in_4bit: bool = False,
+        adapter_path: str | None = None,
     ) -> None:
         try:
             import torch
@@ -28,6 +29,7 @@ class LocalLLMReasoner:
             ) from exc
 
         self.model_name = model_name
+        self.adapter_path = adapter_path
         self.max_input_chars = int(max_input_chars)
         self.max_new_tokens = int(max_new_tokens)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
@@ -40,6 +42,12 @@ class LocalLLMReasoner:
         else:
             kwargs["torch_dtype"] = torch.bfloat16 if torch.cuda.is_available() else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+        if adapter_path:
+            try:
+                from peft import PeftModel
+            except ImportError as exc:
+                raise ModelReasonerUnavailable("Install peft to load a LoRA adapter for LocalLLMReasoner.") from exc
+            self.model = PeftModel.from_pretrained(self.model, adapter_path)
 
     def predict(
         self,
@@ -93,6 +101,8 @@ Nhãn:
 Quy tắc:
 - Nếu quyết định ghi "chấp nhận một phần yêu cầu" thì thường là A_WIN, trừ khi phần chính trong case_query bị bác.
 - Tập trung vào yêu cầu chính trong case_query, không nhầm với phản tố/yêu cầu phụ.
+- Nếu không thấy đoạn "Tuyên xử", "Quyết định", "Chấp nhận", "Không chấp nhận" hoặc "Bác yêu cầu" rõ ràng, đặt confidence <= 0.54.
+- Chỉ đặt confidence >= 0.80 khi prediction dựa trực tiếp trên đoạn quyết định/tuyên xử liên quan đúng yêu cầu chính.
 - Chỉ trả JSON: {{"prediction":"A_WIN|B_WIN","confidence":0.0,"rationale":"..."}}
 
 case_query:
