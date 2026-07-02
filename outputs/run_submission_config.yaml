@@ -1,0 +1,44 @@
+api:
+  base_url: "https://alqac-api.ngrok.pro"
+  endpoint: "/retrieve"
+  api_key_env: "ALQAC_API_KEY"
+  api_key_env_fallback: "ALQAC_TOKEN"
+  min_interval_seconds: 5
+  timeout_seconds: 30
+  max_retries: 5
+  ssl_verify: false
+
+retrieval:
+  queries_per_case: 20
+  min_queries_per_case: 12
+  adaptive_stop: false
+  max_case_evidence: 20
+
+law_retrieval:
+  method: "bm25"
+  top_k: 6
+  embedding_model_name: "BAAI/bge-m3"
+  bm25_weight: 0.45
+  dense_weight: 0.55
+  embedding_batch_size: 16
+  embedding_max_length: 8192
+  dense_fallback_to_bm25: true
+
+prediction:
+  labels: ["A_WIN", "B_WIN"]
+  use_rule_override: true
+  use_model_reasoner: false
+  model_name: "Qwen/Qwen2.5-7B-Instruct"
+  load_in_4bit: false
+  adapter_path: null
+  max_input_chars: 12000
+  max_new_tokens: 256
+  model_override_min_confidence: 0.8
+  rule_override_max_confidence: 0.55
+  model_min_confidence: 0.78
+  strong_rule_confidence: 0.68
+  weak_rule_confidence: 0.45
+
+paths:
+  cache_dir: "cache"
+  logs_dir: "logs"
